@@ -1,0 +1,77 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run check
+
+      - name: Resolve version
+        id: version
+        run: |
+          version=$(python3 -c 'import json;print(json.load(open("plugin.json"))["version"])')
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [ "$version" != "$tag" ]; then
+              echo "plugin.json says $version but the tag is $tag" >&2
+              exit 1
+            fi
+          fi
+          echo "value=$version" >>"$GITHUB_OUTPUT"
+
+      - name: Build plugin archive
+        run: sh scripts/package.sh dist-packages
+
+      - name: Keep the archive as a run artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-package-${{ steps.version.outputs.value }}
+          path: dist-packages/*
+          if-no-files-found: error
+
+      - name: Publish the GitHub release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-packages/*.zip
+            dist-packages/*.sha256
+          generate_release_notes: true
+          body: |
+            QwenPaw 插件离线包 `hub-announcement-${{ steps.version.outputs.value }}.zip`
+            （含已构建的前端 `frontend/dist/index.js`，装完即可用）。
+
+            一行安装：
+
+            ```bash
+            qwenpaw plugin install https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/hub-announcement-${{ steps.version.outputs.value }}.zip
+            ```
+
+            手动安装：下载本页 zip，解压出 `hub-announcement/` 目录后
+            `qwenpaw plugin install ./hub-announcement`。
+
+            装好后编辑插件目录里的 `hub-announcement.config.json`，把 `service_url`
+            指向公告服务（例如 `http://127.0.0.1:8787`），`read_token` 与服务端
+            `ANNOUNCEMENT_READ_TOKEN` 保持一致，然后重启 QwenPaw 或热加载插件。
+
+            校验下载：同目录的 `.sha256` 文件，`sha256sum -c hub-announcement-${{ steps.version.outputs.value }}.zip.sha256`。

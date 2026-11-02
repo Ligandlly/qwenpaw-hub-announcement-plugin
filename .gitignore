@@ -6,3 +6,4 @@ node_modules/
 data/
 *.db
 .DS_Store
+dist-packages/

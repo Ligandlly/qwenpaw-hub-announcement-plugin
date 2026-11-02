@@ -83,14 +83,41 @@ token 存在 `sessionStorage`，12 小时过期；服务重启不会让 token �
 ### 安装
 
 插件需要带新插件 SDK 的 QwenPaw（`sdk.version = 1.0.0`，源码树 2.3.0b1 起）。
-把整个仓库目录（`plugin.json` 所在处）放进 QwenPaw 的插件目录即可，例如：
+
+**用发布好的离线包（推荐）** —— 每个 tag 的 release 附带 `hub-announcement-<version>.zip`，
+里面已经包含构建好的前端，装完即可用：
+
+```bash
+# 把 <version> 换成 release 页上的版本号（例如 0.1.0）
+qwenpaw plugin install https://github.com/Ligandlly/qwenpaw-hub-announcement-plugin/releases/download/v<version>/hub-announcement-<version>.zip
+# 或下载后手动装
+unzip hub-announcement-<version>.zip && qwenpaw plugin install ./hub-announcement
+```
+
+**从源码** —— 把整个仓库目录（`plugin.json` 所在处）放进 QwenPaw 的插件目录：
 
 ```bash
 cp -r . ~/.qwenpaw/plugins/hub-announcement
 # 或在 QwenPaw 里用「本地安装插件」指向该目录
 ```
 
+**自己打包** —— `sh scripts/package.sh` 产出 `dist-packages/hub-announcement-<version>.zip`
+（先 `cd frontend && npm run build`）。
+
 装完在 QwenPaw 控制面启用它，然后刷新对话首页。
+
+### 发布
+
+`plugin.json` 的 `version` 与 tag 必须一致：
+
+```bash
+# 改 plugin.json 的 version → commit → 打 tag
+git tag v0.1.1 && git push origin v0.1.1
+```
+
+`.github/workflows/release.yml` 会 `npm ci` + `npm run check`（tsc + 13 项前端测试 + 构建）、
+打离线包、校验版本与 tag 一致，然后把 zip 和 `.sha256` 挂到 GitHub Release 上；
+手动 `workflow_dispatch` 只产出 run artifact，不发版。
 
 ### 配置
 
