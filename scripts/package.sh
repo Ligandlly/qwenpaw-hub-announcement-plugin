@@ -11,6 +11,10 @@ set -eu
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 OUT_DIR=${1:-"$ROOT/dist-packages"}
+case "$OUT_DIR" in
+  /*) ;;
+  *) OUT_DIR="$ROOT/$OUT_DIR" ;;
+esac
 PLUGIN_ID=hub-announcement
 
 VERSION=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' plugin.json)
