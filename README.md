@@ -3,6 +3,9 @@
 在 QwenPaw 对话首页的欢迎区上方叠一叠运维公告，公告内容由中央服务统一发布。
 插件只读：它定时轮询中央服务并缓存，前端只读插件自己的缓存。
 
+插件离线包：[Releases](https://github.com/Ligandlly/qwenpaw-hub-announcement-plugin/releases)
+（每个 tag 附 `hub-announcement-<version>.zip` + `.sha256`）。
+
 ```
 ┌────────────────┐   GET /api/public/announcements   ┌──────────────────┐
 │  中央公告服务   │ ◀────────── 60s 轮询 ───────────  │  QwenPaw 插件     │
