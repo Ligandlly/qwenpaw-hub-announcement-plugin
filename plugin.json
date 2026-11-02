@@ -1,0 +1,24 @@
+{
+  "id": "hub-announcement",
+  "name": "Hub 公告",
+  "version": "0.1.0",
+  "description": "在对话首页欢迎区展示运维公告，后端定时轮询中央公告服务并缓存。",
+  "description_i18n": {
+    "zh-CN": "在对话首页欢迎区展示运维公告，后端定时轮询中央公告服务并缓存。",
+    "en-US": "Shows operations announcements above the chat welcome, polled and cached by the plugin backend."
+  },
+  "author": "QwenPaw Hub",
+  "type": "general",
+  "entry": {
+    "backend": "plugin.py",
+    "frontend": "frontend/dist/index.js"
+  },
+  "sdk": {
+    "version": "1.0.0",
+    "capabilities": ["apps", "resources", "storage", "logging"]
+  },
+  "meta": {
+    "category": "operations"
+  },
+  "publish": false
+}

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>公告后台 · QwenPaw Hub</title>
+    <link rel="stylesheet" href="/static/admin.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>公告后台</h1>
+      <div class="topbar-actions">
+        <span id="account" class="account" hidden></span>
+        <button id="logout" class="ghost" type="button" hidden>退出</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="login-view" class="card login" hidden>
+        <h2>管理员登录</h2>
+        <p class="muted">使用部署时配置的管理口令。</p>
+        <form id="login-form">
+          <label for="password">管理口令</label>
+          <input id="password" type="password" autocomplete="current-password" required />
+          <button type="submit" class="primary">登录</button>
+        </form>
+      </section>
+
+      <section id="list-view" hidden>
+        <div class="toolbar">
+          <div>
+            <h2>公告列表</h2>
+            <p id="summary" class="muted"></p>
+          </div>
+          <button id="create" class="primary" type="button">新建公告</button>
+        </div>
+        <div id="empty" class="card empty" hidden>
+          <p>还没有公告。写第一条，租户的对话首页就会看到它。</p>
+        </div>
+        <ul id="items" class="items"></ul>
+      </section>
+    </main>
+
+    <div id="editor" class="overlay" hidden>
+      <form id="editor-form" class="card editor" role="dialog" aria-modal="true" aria-labelledby="editor-title">
+        <h2 id="editor-title">新建公告</h2>
+        <label for="title">标题</label>
+        <input id="title" maxlength="200" required />
+
+        <label for="body">正文（Markdown）</label>
+        <textarea id="body" rows="12" placeholder="支持标题、列表、粗体、行内代码与链接。"></textarea>
+
+        <div class="row">
+          <div class="field">
+            <label for="published-at">发布时间</label>
+            <input id="published-at" type="datetime-local" />
+          </div>
+          <div class="field">
+            <label for="status">状态</label>
+            <select id="status">
+              <option value="published">已发布</option>
+              <option value="unpublished">已下架</option>
+            </select>
+          </div>
+        </div>
+
+        <p id="editor-error" class="error" hidden></p>
+
+        <div class="editor-actions">
+          <button id="cancel" class="ghost" type="button">取消</button>
+          <button type="submit" class="primary">保存</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+    <script src="/static/admin.js"></script>
+  </body>
+</html>

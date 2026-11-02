@@ -1,0 +1,5 @@
+{
+  "service_url": "http://127.0.0.1:8787",
+  "read_token": "the-value-of-ANNOUNCEMENT_READ_TOKEN",
+  "poll_seconds": 60
+}
