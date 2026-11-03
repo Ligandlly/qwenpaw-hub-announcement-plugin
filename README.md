@@ -28,7 +28,7 @@ hub-announcement.config.json 插件配置（安装后按环境修改）
 frontend/                    插件前端（React 通过宿主注入，esbuild 打成 IIFE）
   src/                       index.tsx · AnnouncementWelcome.tsx · NativeWelcome.tsx …
   dist/index.js              构建产物，随插件安装
-tests/                       插件后端测试（pytest，23 项含路由级 HTTP 验证）
+tests/                       插件后端测试（pytest，27 项含路由级 HTTP 验证）
 goal-and-requirements.md    规格：目标与需求
 architecture.md             规格：架构与决策
 ```
@@ -85,13 +85,14 @@ token 存在 `sessionStorage`，12 小时过期；服务重启不会让 token �
 
 ### 安装
 
-插件需要带新插件 SDK 的 QwenPaw（`sdk.version = 1.0.0`，源码树 2.3.0b1 起）。
+插件要求 QwenPaw `>= 2.2.2`（`plugin.json` 的 `qwenpaw_version`，走 `register(api)` +
+`register_http_router` + 启动/关闭钩子的插件 API；不含 2.3 才有的 PawApp/SDK 模块）。
 
 **用发布好的离线包（推荐）** —— 每个 tag 的 release 附带 `hub-announcement-<version>.zip`，
 里面已经包含构建好的前端，装完即可用：
 
 ```bash
-# 把 <version> 换成 release 页上的版本号（例如 0.1.0）
+# 把 <version> 换成 release 页上的版本号（例如 0.2.0）
 qwenpaw plugin install https://github.com/Ligandlly/qwenpaw-hub-announcement-plugin/releases/download/v<version>/hub-announcement-<version>.zip
 # 或下载后手动装
 unzip hub-announcement-<version>.zip && qwenpaw plugin install ./hub-announcement
@@ -125,7 +126,7 @@ git tag v0.1.1 && git push origin v0.1.1
 ### 配置
 
 宿主没有插件配置界面，配置就是插件目录旁的 `hub-announcement.config.json`
-（改了不用重启插件，下一次拉取自动生效）：
+（插件启动时读取，改了要重启 QwenPaw 才生效）：
 
 ```json
 {
@@ -143,7 +144,9 @@ git tag v0.1.1 && git push origin v0.1.1
 
 ### 行为
 
-- 后端 60 秒轮询一次，写缓存到插件数据目录；中央服务挂了就用缓存，日志只提示一次
+- 后端轮询一次（默认 60 秒），缓存写到插件数据目录 `<working dir>/plugin-data/hub-announcement/`
+  （`announcements.json` + `dismissed.json`，不在插件安装目录里，重装插件不会丢）；
+  中央服务挂了就用缓存，日志只提示一次
 - 前端挂载时、窗口重新聚焦时、每 5 分钟拉一次插件自己的 `/api/hub-announcement/announcements`
 - 最多同时显示 3 条，按发布时间倒序堆叠；`知道了` 之后不再出现（除非正文或标题改了）
 - 没有任何可显示内容时，欢迎区**原样**显示宿主问候语、说明和快捷提示
@@ -163,15 +166,17 @@ npm run check        # tsc --noEmit + vitest + build
 ### 后端测试
 
 ```bash
-python -m venv .venv && .venv/bin/pip install pytest pytest-asyncio fastapi httpx2
-# 需要装好带插件 SDK 的 qwenpaw（下面用源码树示例）
-PYTHONPATH=/path/to/QwenPaw/src:.venv/lib/python3*/site-packages \
-  .venv/bin/python -m pytest -q          # 插件后端 23 项
+python -m venv .venv && .venv/bin/pip install pytest pytest-asyncio fastapi httpx
+# plugin.py 只从宿主拿 `qwenpaw.constant.WORKING_DIR`，把装了 qwenpaw 的 site-packages 放进
+# PYTHONPATH 即可（宿主解释器版本必须和这些 wheel 匹配，2.2.2 是 python3.11/3.13 各一份）
+PYTHONPATH=/path/to/qwenpaw/site-packages:. \
+  .venv/bin/python -m pytest -q                 # 插件后端 27 项
 cd server && ../.venv/bin/python -m pytest -q   # 中央服务 15 项
 ```
 
-`tests/test_http_surface.py` 按宿主 `qwenpaw/plugins/_apps.py` 的挂载方式，把路由装在
-`/api/hub-announcement/*` 上跑，用来保证 README 和前端用到的 URL 就是真实的 URL。
+`tests/test_http_surface.py` 用宿主同样的方式挂载路由
+（`include_router(router, prefix="/api/hub-announcement")`，对应 `PluginApi.register_http_router`），
+用来保证 README 和前端用到的 URL 就是真实的 URL。
 
 ## 已知限制
 

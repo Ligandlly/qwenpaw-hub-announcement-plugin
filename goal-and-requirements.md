@@ -45,17 +45,17 @@ Hub 现在没有任何面向全体租户的通知渠道。要停机升级、要�
 | --- | --- | --- |
 | 插件形态 | `type: "general"`，`entry` 同时给 `backend` 与 `frontend` | 需要后端轮询与缓存，纯 frontend 插件做不到 |
 | 前端注入点 | chat `welcome.render` 标量槽（wrap：渲染宿主传入的 greeting/description/prompts，再叠卡片） | 现有槽位里唯一既是首屏又不遮挡对话的位置 |
-| 后端 | `PawApp` 路由 `/announcements`，内含中央服务的拉取、缓存与版本比较 | 租户容器不保证能直连外部服务，后端代理一层才好处理鉴权、缓存与离线 |
+| 后端 | `APIRouter` 路由 `/announcements`（`register(api)` 注册，宿主路径 `/api/hub-announcement/*`），内含中央服务的拉取、缓存与版本比较 | 租户容器不保证能直连外部服务，后端代理一层才好处理鉴权、缓存与离线 |
 | 中央服务 | FastAPI + SQLite，单进程同时托管管理页与 API | 公告量极小，拆成两个部署单元没有收益；备份 = 拷一个 db 文件 |
 | 管理鉴权 | 环境变量里的单口令 → bearer token | 自用场景足够；多管理员是以后的事 |
 | 部署 | 中央服务单独跑；插件当前按租户 `qwenpaw plugin install` | 现阶段租户数量少，先不碰镜像 |
-| 关闭记录 | 插件 storage | 插件自带的持久化，不需要额外存储 |
+| 关闭记录 | 插件数据目录（`plugin-data/hub-announcement/dismissed.json`） | 插件自己的持久化，不需要额外存储 |
 
 未确认（按推荐值假设，未经确认）：
 
 - 轮询间隔 60 秒、卡片最多堆叠 3 条。
 - 租户侧只读 API 的鉴权：插件配置里一个共享只读 token，留空则不鉴权。
-- 关闭记录的作用域跟随插件 storage 的 workspace 作用域。
+- 关闭记录的作用域跟随插件数据目录（实例级）。
 
 ## Alternatives Considered
 

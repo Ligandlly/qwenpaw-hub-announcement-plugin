@@ -21,10 +21,10 @@ flowchart LR
     Admin[管理员浏览器] -->|口令登录 + CRUD| Svc[中央公告服务<br/>FastAPI + SQLite]
     Svc -->|同进程托管| AdminPage[管理页静态文件]
     subgraph Tenant[租户 Docker 运行时]
-        FE[插件前端<br/>welcome.render] -->|GET /api/hub-announcement/announcements| BE[插件后端<br/>PawApp + 轮询任务]
+        FE[插件前端<br/>welcome.render] -->|GET /api/hub-announcement/announcements| BE[插件后端<br/>APIRouter + 启动钩子轮询]
         FE -->|POST …/announcements/dismiss| BE
-        BE -->|缓存| Store[(插件 storage<br/>announcements.json)]
-        BE -->|关闭记录| Store2[(插件 storage<br/>dismissed.json)]
+        BE -->|缓存| Store[(plugin-data/<id><br/>announcements.json)]
+        BE -->|关闭记录| Store2[(plugin-data/<id><br/>dismissed.json)]
     end
     BE -->|GET /api/public/announcements<br/>60s + If-None-Match| Svc
 ```
@@ -39,7 +39,7 @@ flowchart LR
 
 **数据模型**（SQLite 单表 `announcements`）：`id`、`title`、`body_md`、`published_at`、`status`（`published` / `unpublished`）、`content_version`、`updated_at`。
 
-**插件后端**：PawApp `hub-announcement`（宿主实际路径 `/api/hub-announcement/...`），对外两个路由：`GET /announcements` 返回 `{ fetched_at, items[], stale }`，数据来自本地缓存而不是每次实时回源；`POST /announcements/dismiss` 接 `{ id, content_version }`，把关闭记录写进插件 storage 并返回新的关闭表。轮询任务在 `on_activate` 里启动，HTTP 客户端与轮询任务都走 `context.resources` 托底。
+**插件后端**：一个 `APIRouter`（宿主实际路径 `/api/hub-announcement/...`，由 `PluginApi.register_http_router` 挂载），对外两个路由：`GET /announcements` 返回 `{ fetched_at, items[], stale }`，数据来自本地缓存而不是每次实时回源；`POST /announcements/dismiss` 接 `{ id, content_version }`，把关闭记录写进插件数据目录并返回新的关闭表。轮询任务在 2.2.2 的启动钩子（`register_startup_hook`）里起、在关闭钩子里取消；插件自己建 `httpx` 客户端和 `asyncio` 任务，不依赖宿主资源容器（2.2.2 没有）。
 
 **插件前端**：只做两件事——读后端缓存的公告、在 `welcome.render` 里渲染卡片。
 
@@ -74,9 +74,10 @@ flowchart LR
 
 ## 实现记录
 
-落地时相对上面的设计有四处补充，均已生效：
+落地时相对上面的设计有五处补充，均已生效：
 
-- **关闭记录的作用域是插件实例级，不是 workspace 级。** 宿主给后端路由的 `ctx.storage` 是「workspace + 用户 + 渠道」三级隔离的，若用它，同一个人换个 workspace 或渠道就会重新弹一次；运维公告本身是实例级文案，关闭记录也用 `register()` 捕获的插件全局 storage（`plugin-data/<plugin_id>/dismissed.json`）。代价是「一个用户关掉，全体不再看到」。
+- **关闭记录的作用域是插件实例级，不是 workspace 级。** 宿主给后端路由的 `ctx.storage` 是「workspace + 用户 + 渠道」三级隔离的，若用它，同一个人换个 workspace 或渠道就会重新弹一次；运维公告本身是实例级文案，关闭记录也用插件自己的数据目录（`<working dir>/plugin-data/<plugin id>/dismissed.json`）。代价是「一个用户关掉，全体不再看到」。
 - **关闭动作走插件后端，而不是前端只写本地。** 后端有了关闭表，`GET /announcements` 才能直接返回过滤后的结果，前端不必自己拼规则；前端仍然乐观隐藏，失败回滚。
-- **插件配置用「插件目录旁的 JSON 文件」，不用 `sdk.secrets`。** 新版 SDK 的 `context.config.secret()` 要求在 `plugin.json` 声明 `sdk.secrets`，而宿主控制面没有插件配置界面（只能 `PUT /api/plugins/{id}/config`），声明了也没法填值。改为 `hub-announcement.config.json`（`service_url` / `read_token` / `poll_seconds`），每次拉取前按需重读，并支持三个环境变量覆盖。
+- **插件配置用「插件目录旁的 JSON 文件」，不用宿主的 secret 设施。** 声明式 secret 要在 `plugin.json` 里写 `sdk.secrets`，而宿主控制面没有插件配置界面（只能 `PUT /api/plugins/{id}/config`），声明了也没法填值。改为 `hub-announcement.config.json`（`service_url` / `read_token` / `poll_seconds`），插件启动时读取，并支持三个环境变量覆盖；改完重启 QwenPaw 生效。
+- **插件只依赖宿主 `qwenpaw.constant.WORKING_DIR`，不 import 2.3 的 `qwenpaw.plugins.sdk`/`apps`。** 2.2.2 镜像里根本没有这两个模块，`PawApp`/`PluginContext` 形式的插件会直接 ImportError；所以改用 `register(api)` + `register_http_router` + 启动/关闭钩子，存储自己用 JSON 文件实现（`JsonFileStorage`，原子写 + 路径逃逸检查），日志把 `fields=` 调用转成 stdlib logging。`plugin.json` 相应去掉 `sdk` 块，改成 `qwenpaw_version: {"min": "2.2.2", "max": "2.4.0"}`——省略 `max` 时宿主只允许同一 minor，显式给 `max` 才能同时覆盖 2.2.x 与 2.3.x。
 - **前端只调宿主的 `host.fetch`，路径不带 `/api`。** 宿主会自己拼 `/api` 并注入鉴权头；同时把宿主原生欢迎区（`ChatWelcome`）复刻成组件（`NativeWelcome.tsx`），因为 `welcome.render` 收到的是 props 而不是可以「包一层」的子节点。

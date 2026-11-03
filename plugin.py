@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass, field
@@ -27,9 +28,10 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 
-from qwenpaw.plugins.apps import HttpRequest, HttpResponse, PawApp
-from qwenpaw.plugins.sdk import PluginContext
+from qwenpaw.constant import WORKING_DIR
 
 PLUGIN_ID = "hub-announcement"
 CONFIG_FILE = "hub-announcement.config.json"
@@ -39,6 +41,7 @@ DEFAULT_POLL_SECONDS = 60.0
 MIN_POLL_SECONDS = 5.0
 REQUEST_TIMEOUT = 10.0
 ITEMS_FEED = "/api/public/announcements"
+DATA_DIR = Path(WORKING_DIR) / "plugin-data" / PLUGIN_ID
 
 
 def _now() -> str:
@@ -120,6 +123,74 @@ def _clean_dismissed(raw: Any) -> dict[str, str]:
         for key, value in raw.items()
         if isinstance(key, str) and isinstance(value, str)
     }
+
+
+def _log_line(message: str, fields: dict[str, Any] | None) -> str:
+    if not fields:
+        return message
+    return f"{message} {json.dumps(fields, ensure_ascii=False, default=str)}"
+
+
+class PluginLog:
+    """Stdlib logging behind the ``fields=`` call shape used below."""
+
+    def __init__(self, logger: logging.Logger) -> None:
+        self._logger = logger
+
+    def info(self, message: str, *, fields: dict[str, Any] | None = None) -> None:
+        self._logger.info(_log_line(message, fields))
+
+    def warning(
+        self,
+        message: str,
+        *,
+        fields: dict[str, Any] | None = None,
+    ) -> None:
+        self._logger.warning(_log_line(message, fields))
+
+    def error(self, message: str, *, fields: dict[str, Any] | None = None) -> None:
+        self._logger.error(_log_line(message, fields))
+
+
+class JsonFileStorage:
+    """The plugin's own data directory, one JSON document per file.
+
+    The host keeps plugin state in ``<working dir>/plugin-data/<plugin id>``;
+    writing there keeps the cache and the dismissal table out of the
+    installed plugin tree, which an upgrade replaces.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+
+    def _path(self, name: str) -> Path:
+        root = self.root.resolve()
+        path = (root / name).resolve()
+        if not path.is_relative_to(root) or path == root:
+            raise ValueError(f"plugin data path escapes its directory: {name}")
+        return path
+
+    def read_json(self, name: str, default: Any = None) -> Any:
+        try:
+            return json.loads(self._path(name).read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return default
+
+    def write_json(self, name: str, value: Any) -> None:
+        path = self._path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(path.name + ".tmp")
+        temporary.write_text(
+            json.dumps(value, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+
+    async def aread_json(self, name: str, default: Any = None) -> Any:
+        return await asyncio.to_thread(self.read_json, name, default)
+
+    async def awrite_json(self, name: str, value: Any) -> None:
+        await asyncio.to_thread(self.write_json, name, value)
 
 
 def normalise_items(raw: Any) -> list[dict[str, str]]:
@@ -308,44 +379,47 @@ class AnnouncementSync:
             )
 
 
-app = PawApp("Announcements", app_id=PLUGIN_ID)
+router = APIRouter()
 _sync: AnnouncementSync | None = None
+_poller: "asyncio.Task[None] | None" = None
+_log = PluginLog(logging.getLogger(f"qwenpaw.plugins.{PLUGIN_ID}"))
 
 
-@app.route("/announcements")
-async def get_announcements(
-    _ctx: Any,
-    _request: HttpRequest,
-) -> HttpResponse:
+@router.get("/announcements")
+async def get_announcements() -> JSONResponse:
     """The cached feed the console renders.  Always a 200."""
     if _sync is None:
-        return HttpResponse(Snapshot().payload(), headers={"Cache-Control": "no-store"})
+        return JSONResponse(
+            Snapshot().payload(),
+            headers={"Cache-Control": "no-store"},
+        )
     payload = _sync.snapshot.payload()
     payload["items"] = _sync.visible_items()
-    return HttpResponse(payload, headers={"Cache-Control": "no-store"})
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
-@app.route("/announcements/dismiss", methods=("POST",))
-async def dismiss_announcement(
-    _ctx: Any,
-    request: HttpRequest,
-) -> HttpResponse:
+@router.post("/announcements/dismiss")
+async def dismiss_announcement(request: Request) -> JSONResponse:
     """Remember that this tenant has read one version of an announcement."""
     if _sync is None:
-        return HttpResponse({"detail": "announcement plugin is not active"}, status=503)
+        return JSONResponse(
+            {"detail": "announcement plugin is not active"},
+            status_code=503,
+        )
+    raw = await request.body()
     try:
-        payload = request.json()
+        payload = json.loads(raw) if raw.strip() else None
     except ValueError:
-        return HttpResponse({"detail": "invalid JSON body"}, status=400)
+        return JSONResponse({"detail": "invalid JSON body"}, status_code=400)
     if not isinstance(payload, dict):
-        return HttpResponse({"detail": "invalid JSON body"}, status=400)
+        return JSONResponse({"detail": "invalid JSON body"}, status_code=400)
     announcement_id = str(payload.get("id") or "").strip()
     content_version = str(payload.get("content_version") or "").strip()
     known = {item["id"]: item["content_version"] for item in _sync.snapshot.items}
     if not announcement_id or announcement_id not in known:
-        return HttpResponse({"detail": "unknown announcement"}, status=404)
+        return JSONResponse({"detail": "unknown announcement"}, status_code=404)
     await _sync.dismiss(announcement_id, content_version or known[announcement_id])
-    return HttpResponse({"dismissed": dict(_sync.dismissed)})
+    return JSONResponse({"dismissed": dict(_sync.dismissed)})
 
 
 async def _poll_loop(sync: AnnouncementSync, interval: float) -> None:
@@ -355,37 +429,59 @@ async def _poll_loop(sync: AnnouncementSync, interval: float) -> None:
 
 
 class Plugin:
-    """Wires the PawApp, the cache and the polling task."""
+    """Registers the HTTP routes and the polling lifecycle with the host."""
 
-    def register(self, context: PluginContext) -> None:
-        context.register_app(app)
-        context.on_activate(self._activate)
+    def register(self, api: Any) -> None:
+        api.register_http_router(
+            router,
+            prefix=f"/{PLUGIN_ID}",
+            tags=["hub-announcement"],
+        )
+        api.register_startup_hook(
+            "hub-announcement-poll-start",
+            self._start,
+            priority=500,
+        )
+        api.register_shutdown_hook(
+            "hub-announcement-poll-stop",
+            self._stop,
+            priority=500,
+        )
 
-    async def _activate(self, context: PluginContext) -> None:
-        global _sync
+    async def _start(self) -> None:
+        global _sync, _poller
         config = Config.load(Path(__file__).resolve().parent)
-        sync = AnnouncementSync(config, context.storage, context.logger)
+        sync = AnnouncementSync(config, JsonFileStorage(DATA_DIR), _log)
         _sync = sync
-        context.resources.connection(sync, description="announcement client")
         await sync.load_cache()
         if not config.configured:
-            context.logger.info(
+            _log.info(
                 "announcement service not configured; serving cached only",
                 fields={"config": CONFIG_FILE},
             )
             return
         await sync.refresh()
-        context.resources.task(
-            _poll_loop(sync, config.poll_seconds),
-            description="announcement poll",
-        )
-        context.logger.info(
+        _poller = asyncio.create_task(_poll_loop(sync, config.poll_seconds))
+        _log.info(
             "announcement polling started",
             fields={
                 "service_url": config.service_url,
                 "poll_seconds": config.poll_seconds,
             },
         )
+
+    async def _stop(self) -> None:
+        global _sync, _poller
+        poller, _poller = _poller, None
+        if poller is not None:
+            poller.cancel()
+            try:
+                await poller
+            except asyncio.CancelledError:
+                pass
+        sync, _sync = _sync, None
+        if sync is not None:
+            await sync.close()
 
 
 plugin = Plugin()

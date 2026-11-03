@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""The HTTP surface the host adapter exposes for our PawApp.
+"""The HTTP surface the host exposes for the plugin router.
 
-The host mounts every `PawApp` route under `/api/<app_id>`; this mirrors that
-mounting so the URLs in the README and the console bundle are the tested ones.
+QwenPaw mounts a plugin ``APIRouter`` at ``/api`` + the prefix the plugin hands
+to ``register_http_router``; this mirrors that mounting so the URLs in the
+README and the console bundle are the tested ones.
 """
 
 from __future__ import annotations
@@ -11,51 +12,20 @@ import sys
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI, Request
-from starlette.responses import JSONResponse, Response
+from fastapi import FastAPI
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import plugin as backend  # noqa: E402
-from qwenpaw.plugins.apps import HttpRequest  # noqa: E402
 
 API_PREFIX = f"/api/{backend.PLUGIN_ID}"
 
 
-def mount_paw_app(app_routes) -> FastAPI:
-    """Minimal copy of `qwenpaw.plugins._apps.register`'s dispatch."""
+def mount_router() -> FastAPI:
+    """Same shape as the host: ``/api`` + the registered prefix."""
     api = FastAPI()
-    for path, methods, handler in app_routes:
-
-        async def endpoint(request: Request, _handler=handler) -> Response:
-            public = HttpRequest(
-                request.method,
-                request.url.path,
-                dict(request.path_params),
-                dict(request.query_params),
-                dict(request.headers),
-                await request.body(),
-            )
-            result = await _handler(None, public)
-            if isinstance(result.body, (bytes, str)):
-                return Response(
-                    result.body,
-                    status_code=result.status,
-                    headers=dict(result.headers),
-                    media_type=result.media_type or "text/plain",
-                )
-            return JSONResponse(
-                result.body,
-                status_code=result.status,
-                headers=dict(result.headers),
-            )
-
-        api.add_api_route(
-            API_PREFIX + path,
-            endpoint,
-            methods=list(methods),
-        )
+    api.include_router(backend.router, prefix=API_PREFIX)
     return api
 
 
@@ -101,15 +71,18 @@ def client():
     )
     backend._sync = sync
     try:
-        with TestClient(mount_paw_app(backend.app._routes)) as test_client:
+        with TestClient(mount_router()) as test_client:
             yield test_client
     finally:
         backend._sync = None
 
 
-def test_routes_are_mounted_under_the_app_prefix() -> None:
-    paths = {path for path, _methods, _handler in backend.app._routes}
-    assert paths == {"/announcements", "/announcements/dismiss"}
+def test_routes_are_mounted_under_the_api_prefix() -> None:
+    paths = set(mount_router().openapi()["paths"])
+    assert paths == {
+        f"{API_PREFIX}/announcements",
+        f"{API_PREFIX}/announcements/dismiss",
+    }
 
 
 def test_get_announcements(client) -> None:
@@ -138,3 +111,23 @@ def test_post_dismiss_unknown_id(client) -> None:
         json={"id": "nope"},
     )
     assert response.status_code == 404
+    assert response.json()["detail"] == "unknown announcement"
+
+
+def test_post_dismiss_without_state_is_503(client) -> None:
+    backend._sync = None
+    response = client.post(
+        f"{API_PREFIX}/announcements/dismiss",
+        json={"id": "a1"},
+    )
+    assert response.status_code == 503
+
+
+def test_feed_without_state_is_empty() -> None:
+    from fastapi.testclient import TestClient
+
+    backend._sync = None
+    with TestClient(mount_router()) as test_client:
+        response = test_client.get(f"{API_PREFIX}/announcements")
+    assert response.status_code == 200
+    assert response.json() == {"fetched_at": None, "items": [], "stale": False}

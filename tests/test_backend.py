@@ -234,57 +234,117 @@ async def test_route_serves_the_snapshot() -> None:
         items=[{"id": "a1", "title": "t", "content_version": "v1"}],
     )
     try:
-        response = await backend.get_announcements(None, None)
+        response = await backend.get_announcements()
     finally:
         backend._sync = None
-    assert response.status == 200
-    assert response.body["fetched_at"] == "2026-01-01T00:00:00Z"
-    assert [item["id"] for item in response.body["items"]] == ["a1"]
-    assert response.headers["Cache-Control"] == "no-store"
+    assert response.status_code == 200
+    body = json.loads(response.body)
+    assert body["fetched_at"] == "2026-01-01T00:00:00Z"
+    assert [item["id"] for item in body["items"]] == ["a1"]
+    assert response.headers["cache-control"] == "no-store"
 
 
 async def test_route_without_state_is_empty() -> None:
     backend._sync = None
-    response = await backend.get_announcements(None, None)
-    assert response.body == {"fetched_at": None, "items": [], "stale": False}
+    response = await backend.get_announcements()
+    assert json.loads(response.body) == {
+        "fetched_at": None,
+        "items": [],
+        "stale": False,
+    }
 
 
-def test_app_registers_the_route() -> None:
-    paths = [(path, methods) for path, methods, _handler in backend.app._routes]
-    assert ("/announcements", ("GET",)) in paths
+def test_router_carries_both_routes() -> None:
+    paths = {
+        (route.path, tuple(sorted(route.methods)))
+        for route in backend.router.routes
+    }
+    assert paths == {
+        ("/announcements", ("GET",)),
+        ("/announcements/dismiss", ("POST",)),
+    }
 
 
-def test_register_wires_app_and_activation() -> None:
-    class FakeContext:
-        def __init__(self) -> None:
-            self.apps = []
-            self.activations = []
+class FakeApi:
+    """Records what the plugin hands the host during ``register``."""
 
-        def register_app(self, paw_app) -> None:
-            self.apps.append(paw_app)
+    def __init__(self) -> None:
+        self.routers: list[tuple[object, str]] = []
+        self.startup: list[tuple[str, object]] = []
+        self.shutdown: list[tuple[str, object]] = []
 
-        def on_activate(self, callback) -> None:
-            self.activations.append(callback)
+    def register_http_router(self, router, *, prefix, tags=None) -> None:
+        self.routers.append((router, prefix))
 
-    context = FakeContext()
-    backend.Plugin().register(context)
-    assert context.apps == [backend.app]
-    assert context.activations
+    def register_startup_hook(self, hook_name, callback, priority=100) -> None:
+        self.startup.append((hook_name, callback))
+
+    def register_shutdown_hook(self, hook_name, callback, priority=100) -> None:
+        self.shutdown.append((hook_name, callback))
+
+
+def test_register_mounts_the_router_and_the_poll_lifecycle() -> None:
+    api = FakeApi()
+    backend.Plugin().register(api)
+    assert [prefix for _router, prefix in api.routers] == ["/hub-announcement"]
+    assert api.routers[0][0] is backend.router
+    assert len(api.startup) == 1 and len(api.shutdown) == 1
+    start_hook, stop_hook = api.startup[0][1], api.shutdown[0][1]
+    assert start_hook.__self__ is stop_hook.__self__
+
+
+async def test_startup_and_shutdown_own_the_poll_task(tmp_path, monkeypatch) -> None:
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=FEED)
+
+    sync = backend.AnnouncementSync(
+        backend.Config(service_url="https://ann.example", poll_seconds=60.0),
+        FakeStorage(),
+        FakeLogger(),
+        transport=httpx.MockTransport(handler),
+    )
+    monkeypatch.setattr(backend, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(
+        backend.Config,
+        "load",
+        classmethod(lambda cls, _dir, environ=None: sync.config),
+    )
+    monkeypatch.setattr(
+        backend,
+        "AnnouncementSync",
+        lambda *args, **kwargs: sync,
+    )
+
+    instance = backend.Plugin()
+    await instance._start()  # noqa: SLF001 - the lifecycle is the unit
+    try:
+        assert backend._sync is sync
+        assert backend._poller is not None and not backend._poller.done()
+        assert len(calls) == 1
+    finally:
+        await instance._stop()  # noqa: SLF001 - the lifecycle is the unit
+    assert backend._sync is None
+    assert backend._poller is None
 
 
 # --- dismissals -------------------------------------------------------------
 
 class FakeRequest:
-    """Just enough of HttpRequest for the dismiss route."""
+    """Just enough of a Starlette ``Request`` for the dismiss route."""
 
     def __init__(self, payload) -> None:
-        self.body = b""
-        self._payload = payload
+        if isinstance(payload, Exception):
+            self._body = b"{not json"
+        elif isinstance(payload, (bytes, bytearray)):
+            self._body = bytes(payload)
+        else:
+            self._body = json.dumps(payload).encode("utf-8")
 
-    def json(self):
-        if isinstance(self._payload, Exception):
-            raise self._payload
-        return self._payload
+    async def body(self) -> bytes:
+        return self._body
 
 
 def install_sync(items=None) -> backend.AnnouncementSync:
@@ -301,51 +361,58 @@ async def test_dismiss_hides_the_item_and_persists() -> None:
     sync = install_sync()
     try:
         response = await backend.dismiss_announcement(
-            None,
             FakeRequest({"id": "a1", "content_version": "v1"}),
         )
-        feed = await backend.get_announcements(None, None)
+        feed = await backend.get_announcements()
     finally:
         backend._sync = None
 
-    assert response.status == 200
-    assert response.body == {"dismissed": {"a1": "v1"}}
-    assert feed.body["items"] == []
+    assert response.status_code == 200
+    assert json.loads(response.body) == {"dismissed": {"a1": "v1"}}
+    assert json.loads(feed.body)["items"] == []
     assert sync.storage.data[backend.DISMISSED_FILE] == {"a1": "v1"}
 
 
 async def test_new_content_version_resurfaces_the_announcement() -> None:
     sync = install_sync()
     try:
-        await backend.dismiss_announcement(None, FakeRequest({"id": "a1", "content_version": "v1"}))
+        await backend.dismiss_announcement(
+            FakeRequest({"id": "a1", "content_version": "v1"}),
+        )
         # The announcement is edited centrally: same id, new version.
         sync.snapshot.items[0]["content_version"] = "v2"
-        feed = await backend.get_announcements(None, None)
+        feed = await backend.get_announcements()
     finally:
         backend._sync = None
 
-    assert [item["id"] for item in feed.body["items"]] == ["a1"]
+    assert [item["id"] for item in json.loads(feed.body)["items"]] == ["a1"]
 
 
 async def test_dismiss_validation() -> None:
     sync = install_sync()
     try:
-        unknown = await backend.dismiss_announcement(None, FakeRequest({"id": "zz"}))
-        broken = await backend.dismiss_announcement(None, FakeRequest(ValueError("bad")))
-        wrong_type = await backend.dismiss_announcement(None, FakeRequest(["a1"]))
+        unknown = await backend.dismiss_announcement(FakeRequest({"id": "zz"}))
+        broken = await backend.dismiss_announcement(FakeRequest(ValueError("bad")))
+        wrong_type = await backend.dismiss_announcement(FakeRequest(["a1"]))
     finally:
         backend._sync = None
 
-    assert (unknown.status, unknown.body["detail"]) == (404, "unknown announcement")
-    assert (broken.status, broken.body["detail"]) == (400, "invalid JSON body")
-    assert wrong_type.status == 400
+    assert (unknown.status_code, json.loads(unknown.body)["detail"]) == (
+        404,
+        "unknown announcement",
+    )
+    assert (broken.status_code, json.loads(broken.body)["detail"]) == (
+        400,
+        "invalid JSON body",
+    )
+    assert wrong_type.status_code == 400
     assert sync.dismissed == {}
 
 
 async def test_dismiss_without_active_plugin_is_503() -> None:
     backend._sync = None
-    response = await backend.dismiss_announcement(None, FakeRequest({"id": "a1"}))
-    assert response.status == 503
+    response = await backend.dismiss_announcement(FakeRequest({"id": "a1"}))
+    assert response.status_code == 503
 
 
 async def test_dismissal_survives_a_reload_and_is_cleaned() -> None:
@@ -363,3 +430,13 @@ async def test_dismissal_survives_a_reload_and_is_cleaned() -> None:
     sync._prune_dismissed()  # noqa: SLF001 - pruning is the unit under test
     assert sync.dismissed == {"a1": "v1"}
     assert sync.visible_items() == []
+
+
+def test_json_file_storage_round_trip_and_traversal_guard(tmp_path) -> None:
+    storage = backend.JsonFileStorage(tmp_path / "data")
+    storage.write_json(backend.CACHE_FILE, {"items": [{"id": "a1"}]})
+    assert storage.read_json(backend.CACHE_FILE) == {"items": [{"id": "a1"}]}
+    assert storage.read_json("missing.json", "fallback") == "fallback"
+    with pytest.raises(ValueError):
+        storage.read_json("../escape.json")
+    assert (tmp_path / "data" / backend.CACHE_FILE).is_file()
