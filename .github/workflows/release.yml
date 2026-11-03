@@ -71,7 +71,7 @@ jobs:
             `qwenpaw plugin install ./hub-announcement`。
 
             装好后编辑插件目录里的 `hub-announcement.config.json`，把 `service_url`
-            指向公告服务（例如 `http://127.0.0.1:8787`），`read_token` 与服务端
+            指向公告服务（例如 `http://127.0.0.1:8899`），`read_token` 与服务端
             `ANNOUNCEMENT_READ_TOKEN` 保持一致，然后重启 QwenPaw 或热加载插件。
 
             校验下载：同目录的 `.sha256` 文件，`sha256sum -c hub-announcement-${{ steps.version.outputs.value }}.zip.sha256`。

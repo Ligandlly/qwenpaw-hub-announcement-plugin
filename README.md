@@ -52,12 +52,12 @@ ANNOUNCEMENT_READ_TOKEN='可选的只读令牌' \
 | `ANNOUNCEMENT_ADMIN_PASSWORD` | ✅ | 管理页登录口令，只存服务端 |
 | `ANNOUNCEMENT_DB` | | SQLite 路径，默认 `./data/announcements.db` |
 | `ANNOUNCEMENT_READ_TOKEN` | | 设置后，公开接口也要求 `Authorization: Bearer <它>` |
-| `ANNOUNCEMENT_HOST` / `ANNOUNCEMENT_PORT` | | 默认 `0.0.0.0:8787` |
+| `ANNOUNCEMENT_HOST` / `ANNOUNCEMENT_PORT` | | 默认 `0.0.0.0:8899` |
 | `ANNOUNCEMENT_STATIC_DIR` | | 管理页目录，默认包内 `static/` |
 
 ### 管理页
 
-浏览器打开 `http://<host>:8787/`，输入口令即可：
+浏览器打开 `http://<host>:8899/`，输入口令即可：
 
 - 新建公告：标题 + Markdown 正文（`published_at` 留空即「现在」）
 - 编辑 / 发布 / 下架（下架保留记录，可重新上架）/ 删除
@@ -130,7 +130,7 @@ git tag v0.1.1 && git push origin v0.1.1
 
 ```json
 {
-  "service_url": "http://127.0.0.1:8787",
+  "service_url": "http://127.0.0.1:8899",
   "read_token": "",
   "poll_seconds": 60
 }
