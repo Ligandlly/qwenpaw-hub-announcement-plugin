@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # plugin.py only needs `qwenpaw.constant.WORKING_DIR` from the host, so
+      # installing the host package is enough to exercise the real contract.
+      - name: Install test dependencies
+        run: pip install "qwenpaw==2.2.2" pytest pytest-asyncio httpx
+
+      - name: Plugin backend tests
+        run: python -m pytest -q
+
+      - name: Announcement service tests
+        working-directory: server
+        run: python -m pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Type check, unit tests and bundle
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run check
