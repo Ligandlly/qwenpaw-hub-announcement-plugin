@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from announcement_service.app import Settings, create_app
 
 
@@ -147,3 +149,16 @@ def test_admin_page_and_assets_are_served(client) -> None:
     assert "公告后台" in page.text
     assert client.get("/static/admin.js").status_code == 200
     assert client.get("/static/admin.css").status_code == 200
+
+
+def test_admin_css_keeps_hidden_elements_hidden(client) -> None:
+    """Author `display` rules beat the UA `[hidden]` rule, so admin.css needs a guard.
+
+    Without it the editor overlay (`.overlay { display: flex }`) is painted on top
+    of the login card as soon as the backend page is opened.
+    """
+    css = (Path(__file__).resolve().parents[1] / "static" / "admin.css").read_text(
+        encoding="utf-8"
+    )
+    assert "[hidden]" in css
+    assert "display: none !important" in css
