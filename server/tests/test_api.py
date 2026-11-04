@@ -151,6 +151,12 @@ def test_admin_page_and_assets_are_served(client) -> None:
     assert client.get("/static/admin.css").status_code == 200
 
 
+def test_admin_assets_are_never_served_from_a_stale_cache(client) -> None:
+    """Asset URLs carry no version, so they must be revalidated on every load."""
+    for path in ("/", "/static/admin.css", "/static/admin.js"):
+        assert client.get(path).headers["cache-control"] == "no-cache", path
+
+
 def test_admin_css_keeps_hidden_elements_hidden(client) -> None:
     """Author `display` rules beat the UA `[hidden]` rule, so admin.css needs a guard.
 

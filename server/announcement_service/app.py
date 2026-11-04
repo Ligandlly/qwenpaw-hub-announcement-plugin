@@ -101,6 +101,19 @@ def create_app(
         if not auth.verify(_bearer(request)):
             raise HTTPException(status_code=401, detail="admin token required")
 
+    @app.middleware("http")
+    async def revalidate_admin_assets(request: Request, call_next):
+        """Admin assets carry no version in their URL, so always revalidate.
+
+        Without a Cache-Control header the browser applies heuristic freshness
+        (10% of the file's age) and keeps serving the previous admin.css/js long
+        after an upgrade changed them.
+        """
+        response = await call_next(request)
+        if not request.url.path.startswith("/api/"):
+            response.headers.setdefault("Cache-Control", "no-cache")
+        return response
+
     @app.get("/api/health")
     def health() -> dict[str, bool]:
         return {"ok": True}
