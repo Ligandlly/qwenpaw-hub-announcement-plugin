@@ -9,7 +9,7 @@
 ```
 ┌────────────────┐   GET /api/public/announcements   ┌──────────────────┐
 │  中央公告服务   │ ◀────────── 60s 轮询 ───────────  │  QwenPaw 插件     │
-│ FastAPI+SQLite │                                   │  backend  → 缓存  │
+│ Rust+SQLite    │                                   │  backend  → 缓存  │
 │   + 管理页      │ ◀──── 发/下架（管理口令）───────── │  frontend → 卡片  │
 └────────────────┘                                   └──────────────────┘
 ```
@@ -17,11 +17,11 @@
 ## 目录
 
 ```
-server/                      中央公告服务（独立部署）
-  announcement_service/      db.py · auth.py · app.py · __main__.py
+server/                      中央公告服务（独立部署，Rust）
+  src/                       main.rs · app.rs（HTTP）· db.rs · auth.rs · config.rs
   static/                    管理页（原生 JS，无需构建）
-  tests/                     pytest（15 项）
-  run.sh  .env.example  pyproject.toml
+  tests/                     cargo test（37 项，含路由级 HTTP 验证）
+  Cargo.toml  Cargo.lock  run.sh  .env.example
 plugin.py                    QwenPaw 插件后端（轮询 + 缓存 + 两个 GET/POST 路由）
 plugin.json                  插件清单（type: general，backend + frontend）
 hub-announcement.config.json 插件配置（安装后按环境修改）
@@ -41,11 +41,30 @@ architecture.md             规格：架构与决策
 cd server
 ANNOUNCEMENT_ADMIN_PASSWORD='换成你的口令' \
 ANNOUNCEMENT_READ_TOKEN='可选的只读令牌' \
-./run.sh                      # 等价于 python -m announcement_service
+./run.sh                      # 等价于 cargo run --release --bin hub-announcement-service
 ```
 
-依赖：`fastapi`、`uvicorn`（`pip install fastapi uvicorn`，或用 `server/pyproject.toml`）。
+依赖：Rust 稳定版工具链（`rustup`，提供 `cargo`）。SQLite 通过 `rusqlite` 静态编译，无需系统库。
+编译产物是单个二进制：`cargo build --release` 后直接运行 `target/release/hub-announcement-service`。
 数据落在 `./data/announcements.db`（SQLite，首次启动自动建表）。
+
+**Docker 镜像**（`server/Dockerfile`）：构建阶段用 `rust:1-alpine` 编出 musl 静态二进制，
+运行时是 `scratch`——镜像里只有一个静态二进制、管理页和 `/etc/passwd`，约 5 MB，以
+非 root 用户（uid 10001）运行：
+
+```bash
+docker build -t hub-announcement-service ./server
+docker run -d -p 8899:8899 \
+  -e ANNOUNCEMENT_ADMIN_PASSWORD='换成你的口令' \
+  -v announcements:/data hub-announcement-service
+```
+
+镜像内 `ANNOUNCEMENT_DB=/data/announcements.db`，挂载命名卷即可持久化。
+构建默认走清华 TUNA 的 crates.io 镜像（`CARGO_REGISTRY_MIRROR` 可覆盖）；若该镜像
+索引滞后或对出口 IP 返回 403，会自动退回 `rsproxy.cn` 重试一次。
+
+`.github/workflows/docker.yml` 构建 `linux/amd64` 镜像并做冒烟测试（健康检查、登录），
+push 到 `main` 或 `v*` tag 时推送到 `ghcr.io/<owner>/hub-announcement-service`；PR 只构建不推送。
 
 | 环境变量 | 必填 | 说明 |
 | --- | --- | --- |
@@ -53,7 +72,8 @@ ANNOUNCEMENT_READ_TOKEN='可选的只读令牌' \
 | `ANNOUNCEMENT_DB` | | SQLite 路径，默认 `./data/announcements.db` |
 | `ANNOUNCEMENT_READ_TOKEN` | | 设置后，公开接口也要求 `Authorization: Bearer <它>` |
 | `ANNOUNCEMENT_HOST` / `ANNOUNCEMENT_PORT` | | 默认 `0.0.0.0:8899` |
-| `ANNOUNCEMENT_STATIC_DIR` | | 管理页目录，默认包内 `static/` |
+| `ANNOUNCEMENT_STATIC_DIR` | | 管理页目录，默认 `server/static/` |
+| `ANNOUNCEMENT_LOG_LEVEL` | | 日志级别，默认 `info` |
 
 ### 管理页
 
@@ -171,7 +191,7 @@ python -m venv .venv && .venv/bin/pip install pytest pytest-asyncio fastapi http
 # PYTHONPATH 即可（宿主解释器版本必须和这些 wheel 匹配，2.2.2 是 python3.11/3.13 各一份）
 PYTHONPATH=/path/to/qwenpaw/site-packages:. \
   .venv/bin/python -m pytest -q                 # 插件后端 27 项
-cd server && ../.venv/bin/python -m pytest -q   # 中央服务 15 项
+cd server && cargo test                        # 中央服务 37 项（无需 Python）
 ```
 
 `tests/test_http_surface.py` 用宿主同样的方式挂载路由

@@ -1,0 +1,36 @@
+[package]
+name = "qwenpaw-hub-announcement-service"
+version = "1.0.0"
+description = "Central announcement service for QwenPaw Hub tenants"
+edition = "2021"
+publish = false
+
+[lib]
+name = "announcement_service"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hub-announcement-service"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+hmac = "0.12"
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+subtle = "2"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "fs"] }
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

@@ -18,7 +18,7 @@ parent: qwenpaw-hub-announcement
 
 ```mermaid
 flowchart LR
-    Admin[管理员浏览器] -->|口令登录 + CRUD| Svc[中央公告服务<br/>FastAPI + SQLite]
+    Admin[管理员浏览器] -->|口令登录 + CRUD| Svc[中央公告服务<br/>Rust (axum) + SQLite]
     Svc -->|同进程托管| AdminPage[管理页静态文件]
     subgraph Tenant[租户 Docker 运行时]
         FE[插件前端<br/>welcome.render] -->|GET /api/hub-announcement/announcements| BE[插件后端<br/>APIRouter + 启动钩子轮询]
@@ -81,3 +81,4 @@ flowchart LR
 - **插件配置用「插件目录旁的 JSON 文件」，不用宿主的 secret 设施。** 声明式 secret 要在 `plugin.json` 里写 `sdk.secrets`，而宿主控制面没有插件配置界面（只能 `PUT /api/plugins/{id}/config`），声明了也没法填值。改为 `hub-announcement.config.json`（`service_url` / `read_token` / `poll_seconds`），插件启动时读取，并支持三个环境变量覆盖；改完重启 QwenPaw 生效。
 - **插件只依赖宿主 `qwenpaw.constant.WORKING_DIR`，不 import 2.3 的 `qwenpaw.plugins.sdk`/`apps`。** 2.2.2 镜像里根本没有这两个模块，`PawApp`/`PluginContext` 形式的插件会直接 ImportError；所以改用 `register(api)` + `register_http_router` + 启动/关闭钩子，存储自己用 JSON 文件实现（`JsonFileStorage`，原子写 + 路径逃逸检查），日志把 `fields=` 调用转成 stdlib logging。`plugin.json` 相应去掉 `sdk` 块，改成 `qwenpaw_version: {"min": "2.2.2", "max": "2.4.0"}`——省略 `max` 时宿主只允许同一 minor，显式给 `max` 才能同时覆盖 2.2.x 与 2.3.x。
 - **前端只调宿主的 `host.fetch`，路径不带 `/api`。** 宿主会自己拼 `/api` 并注入鉴权头；同时把宿主原生欢迎区（`ChatWelcome`）复刻成组件（`NativeWelcome.tsx`），因为 `welcome.render` 收到的是 props 而不是可以「包一层」的子节点。
+- **中央服务改写为 Rust（axum + rusqlite）。** HTTP 契约、SQLite 表结构与索引、管理 token 格式（HMAC 密钥派生方式不变）、`ETag` 计算方式全部保持不变，所以已有 `data/announcements.db` 直接可用，管理员已登录的 token 在切换后仍有效。两处有意的差异：请求体校验失败统一返回 `{"detail": "<说明>"}` 字符串（不再是 FastAPI 的数组结构，管理页只读取字符串形式）；`PATCH` 把非空字段的 `null` 明确返回 422（旧实现会以 500 失败）。
