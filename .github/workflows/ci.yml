@@ -4,8 +4,47 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  backend:
+  server:
+    name: server (rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Release build
+        run: cargo build --release --locked --bin hub-announcement-service
+
+  plugin:
+    name: plugin (python)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,14 +58,11 @@ jobs:
       - name: Install test dependencies
         run: pip install "qwenpaw==2.2.2" pytest pytest-asyncio httpx
 
-      - name: Plugin backend tests
-        run: python -m pytest -q
-
-      - name: Announcement service tests
-        working-directory: server
+      - name: Run plugin tests
         run: python -m pytest -q
 
   frontend:
+    name: frontend (node)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

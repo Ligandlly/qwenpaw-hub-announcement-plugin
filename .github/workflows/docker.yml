@@ -1,0 +1,140 @@
+name: docker
+
+# Builds the slim linux/amd64 image of the announcement service (server/Dockerfile).
+#   - pull requests touching the server: build + smoke test only, nothing pushed
+#   - push to main / v* tags: build, smoke test, push to GHCR
+#     ghcr.io/<owner>/hub-announcement-service (latest on the default branch)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "server/**"
+      - ".github/workflows/docker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  image:
+    name: build linux/amd64 image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      PLATFORM: linux/amd64
+      SMOKE_PASSWORD: ci-smoke-password
+      # Tag used for the local build, the smoke test and every push.
+      IMAGE_TAG: latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image name
+        id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/hub-announcement-service" >>"$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Image tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.name.outputs.image }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+            type=raw,value=${{ env.IMAGE_TAG }},enable={{is_default_branch}}
+
+      # Built for one platform and loaded into the local daemon, so the smoke
+      # test runs the exact image that gets pushed.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: server
+          file: server/Dockerfile
+          platforms: ${{ env.PLATFORM }}
+          load: true
+          push: false
+          tags: |
+            ${{ steps.name.outputs.image }}:${{ env.IMAGE_TAG }}
+            ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
+          # GitHub runners reach crates.io directly, so skip the CN mirror the
+          # Dockerfile defaults to (empty = no source replacement).
+          build-args: |
+            CARGO_REGISTRY_MIRROR=
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          set -eu
+          image="${{ steps.name.outputs.image }}:${{ env.IMAGE_TAG }}"
+          docker run -d --name smoke -p 8899:8899 \
+            -e ANNOUNCEMENT_ADMIN_PASSWORD="$SMOKE_PASSWORD" "$image"
+
+          up=0
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8899/api/health >/dev/null 2>&1; then
+              up=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$up" != 1 ]; then
+            echo "service did not become healthy" >&2
+            docker logs smoke >&2
+            exit 1
+          fi
+
+          curl -fsS http://127.0.0.1:8899/ >/dev/null
+          curl -fsS http://127.0.0.1:8899/static/admin.js >/dev/null
+          curl -fsS -H 'Content-Type: application/json' \
+            -d "{\"password\":\"$SMOKE_PASSWORD\"}" \
+            http://127.0.0.1:8899/api/admin/login >/dev/null
+          # scratch has no shell or coreutils, so assert the non-root user from
+          # the image config instead of running `id` inside it.
+          test "$(docker inspect -f '{{.Config.User}}' smoke)" = "10001:10001"
+
+          docker rm -f smoke >/dev/null
+
+      - name: Report image size
+        run: |
+          {
+            echo "### Image"
+            echo
+            docker image ls "${{ steps.name.outputs.image }}:${{ env.IMAGE_TAG }}" \
+              --format 'Image `{{.ID}}` (linux/amd64), size **{{.Size}}**'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        if: github.event_name != 'pull_request'
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -eu
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            docker push "$tag"
+          done <<<"$TAGS"

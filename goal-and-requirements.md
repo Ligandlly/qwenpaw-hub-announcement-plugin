@@ -13,7 +13,7 @@ title: QwenPaw Hub 公告插件
 
 给 QwenPaw Hub 管理的多租户部署（Docker 运行时）补一条面向所有租户的通知通道。它由两部分组成：
 
-- **中央公告服务**：FastAPI + SQLite，一个进程同时提供管理 API、租户只读 API 和管理页面。
+- **中央公告服务**：Rust（axum）+ SQLite，一个进程同时提供管理 API、租户只读 API 和管理页面。
 - **QwenPaw 插件**：后端轮询中央服务并缓存，前端在对话首页的欢迎区叠一张公告卡片。
 
 "hub" 在这里指 QwenPaw 的多租户控制面（`qwenpaw hub`），不是 QwenPaw 插件类型里的 `hub`（那是市场源，与本插件无关）。
@@ -46,7 +46,7 @@ Hub 现在没有任何面向全体租户的通知渠道。要停机升级、要�
 | 插件形态 | `type: "general"`，`entry` 同时给 `backend` 与 `frontend` | 需要后端轮询与缓存，纯 frontend 插件做不到 |
 | 前端注入点 | chat `welcome.render` 标量槽（wrap：渲染宿主传入的 greeting/description/prompts，再叠卡片） | 现有槽位里唯一既是首屏又不遮挡对话的位置 |
 | 后端 | `APIRouter` 路由 `/announcements`（`register(api)` 注册，宿主路径 `/api/hub-announcement/*`），内含中央服务的拉取、缓存与版本比较 | 租户容器不保证能直连外部服务，后端代理一层才好处理鉴权、缓存与离线 |
-| 中央服务 | FastAPI + SQLite，单进程同时托管管理页与 API | 公告量极小，拆成两个部署单元没有收益；备份 = 拷一个 db 文件 |
+| 中央服务 | Rust（axum）+ SQLite，单进程同时托管管理页与 API | 公告量极小，拆成两个部署单元没有收益；备份 = 拷一个 db 文件 |
 | 管理鉴权 | 环境变量里的单口令 → bearer token | 自用场景足够；多管理员是以后的事 |
 | 部署 | 中央服务单独跑；插件当前按租户 `qwenpaw plugin install` | 现阶段租户数量少，先不碰镜像 |
 | 关闭记录 | 插件数据目录（`plugin-data/hub-announcement/dismissed.json`） | 插件自己的持久化，不需要额外存储 |
