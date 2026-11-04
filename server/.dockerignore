@@ -1,0 +1,12 @@
+# Keep the build context to what the image needs.
+target/
+data/
+tests/
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+*.md
+.git
+.gitignore
