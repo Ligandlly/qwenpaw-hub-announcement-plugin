@@ -26,7 +26,7 @@ plugin.py                    QwenPaw 插件后端（轮询 + 缓存 + 两个 GET
 plugin.json                  插件清单（type: general，backend + frontend）
 hub-announcement.config.json 插件配置（安装后按环境修改）
 frontend/                    插件前端（React 通过宿主注入，esbuild 打成 IIFE）
-  src/                       index.tsx · AnnouncementWelcome.tsx · NativeWelcome.tsx …
+  src/                       index.tsx · AnnouncementWelcome.tsx · NativeWelcome.tsx · AgentPicker.tsx …
   dist/index.js              构建产物，随插件安装
 tests/                       插件后端测试（pytest，27 项含路由级 HTTP 验证）
 goal-and-requirements.md    规格：目标与需求
@@ -169,7 +169,8 @@ git tag v0.1.1 && git push origin v0.1.1
   中央服务挂了就用缓存，日志只提示一次
 - 前端挂载时、窗口重新聚焦时、每 5 分钟拉一次插件自己的 `/api/hub-announcement/announcements`
 - 最多同时显示 3 条，按发布时间倒序堆叠；`知道了` 之后不再出现（除非正文或标题改了）
-- 没有任何可显示内容时，欢迎区**原样**显示宿主问候语、说明和快捷提示
+- 欢迎区的宿主示例问题（快捷提示）已替换为智能体选择器（`AgentPicker`）：选一个智能体点「启动对话」，切换智能体并跳到一条空白对话；只有一个可用智能体（或列表为空）时不显示选择器
+- 没有任何可显示内容时，欢迎区显示宿主问候语和说明，选择器与公告都不出现
 - 插件永不写中央服务（关闭记录只写本地）
 
 ### 前端构建与测试
@@ -201,7 +202,8 @@ cd server && cargo test                        # 中央服务 37 项（无需 Py
 ## 已知限制
 
 - **欢迎区是 last-writer-wins 的标量槽**：如果同时装了别的也接管 `chat.welcome.render`
-  的插件（例如 startup page），后注册的会盖掉前者，两者只会显示一个。
+  的插件（例如 startup page），后注册的会盖掉前者，两者只会显示一个。智能体选择器已合并进本插件，
+  与 `qwenpaw-startup-plugin` 同时安装时请只保留本插件。
 - 关闭记录存在插件数据目录（实例级），同一个人换浏览器或换 workspace 不会再弹；
   反过来，一个用户点了「知道了」，对同一实例的其他用户也生效。
 - 没有已读统计、没有定时生效、没有置顶或多管理员；多条公告只叠 3 条。

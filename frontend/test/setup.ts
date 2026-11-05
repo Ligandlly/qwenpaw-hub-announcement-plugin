@@ -8,10 +8,14 @@ import { cleanup } from "@testing-library/react";
 beforeEach(async () => {
   const { setReactForTests } = await import("../src/react");
   setReactForTests(React);
+  // Pin the console language so assertions do not depend on jsdom's navigator.
+  window.localStorage.setItem("language", "zh-CN");
 });
 
 afterEach(async () => {
   cleanup();
+  window.sessionStorage.clear();
+  window.localStorage.clear();
   const { removeStyles } = await import("../src/styles");
   removeStyles();
   delete (window as { QwenPaw?: unknown }).QwenPaw;
