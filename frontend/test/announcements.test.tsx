@@ -62,13 +62,12 @@ const TWO_AGENTS: AgentSummary[] = [
 const noAgents = () => Promise.resolve<AgentSummary[]>([]);
 
 describe("AnnouncementWelcome", () => {
-  it("keeps the host welcome and stacks announcements under it", async () => {
+  it("stacks announcements without the host greeting", async () => {
     const { fetcher } = makeFetcher([announcement(1)]);
     render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} loadAgents={noAgents} />);
 
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("今天想做点什么？");
-    expect(screen.getByText("选一个开始，或直接输入。")).toBeTruthy();
-    expect(document.querySelector('img[src="/qwenpaw.png"]')).not.toBeNull();
+    expect(screen.queryByRole("heading", { level: 2 })).toBeNull();
+    expect(document.querySelector(".hub-ann-welcome")).toBeNull();
 
     const card = await screen.findByRole("article");
     expect(card.textContent).toContain("公告 1");
@@ -100,7 +99,6 @@ describe("AnnouncementWelcome", () => {
     );
     await screen.findByRole("article");
     expect(document.querySelector(".hub-ann-pick")).toBeNull();
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("今天想做点什么？");
   });
 
   it("shows at most three announcements, newest first", async () => {
@@ -149,14 +147,13 @@ describe("AnnouncementWelcome", () => {
 
     await waitFor(() => expect(calls.length).toBe(1));
     expect(container.querySelector(".hub-ann-list")).toBeNull();
-    expect(screen.getByRole("heading", { level: 2 })).toBeTruthy();
   });
 
   it("survives an unreachable backend", async () => {
-    const { fetcher } = makeFetcher(() => jsonResponse({ detail: "down" }, 503));
+    const { fetcher, calls } = makeFetcher(() => jsonResponse({ detail: "down" }, 503));
     render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} loadAgents={noAgents} />);
 
-    await waitFor(() => expect(screen.getByRole("heading", { level: 2 })).toBeTruthy());
+    await waitFor(() => expect(calls.length).toBe(1));
     expect(screen.queryByRole("article")).toBeNull();
   });
 

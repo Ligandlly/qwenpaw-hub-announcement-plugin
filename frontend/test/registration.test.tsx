@@ -84,7 +84,6 @@ describe("registration", () => {
     render(rendered[0].render({ greeting: "你好", onSubmit: vi.fn() }));
 
     expect(await screen.findByText("停机升级")).toBeTruthy();
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("你好");
     index.unregister();
   });
 

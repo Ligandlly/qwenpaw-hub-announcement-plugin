@@ -17,25 +17,6 @@ const CSS = `
   padding: 24px;
   text-align: center;
 }
-.hub-ann-avatar {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-}
-.hub-ann-greeting {
-  margin: 20px 0 8px;
-  font-size: clamp(20px, 2vw, 26px);
-  font-weight: 600;
-  line-height: 1.3;
-  letter-spacing: -0.025em;
-}
-.hub-ann-description {
-  margin: 0;
-  font-size: 13px;
-  color: var(--app-text-secondary);
-  line-height: 1.6;
-  text-wrap: pretty;
-}
 .hub-ann-list {
   display: grid;
   gap: 8px;

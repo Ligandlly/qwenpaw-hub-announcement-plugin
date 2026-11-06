@@ -10,7 +10,7 @@ import {
   type Feed,
   type Fetcher,
 } from "./api";
-import { NativeWelcome, type WelcomeProps } from "./NativeWelcome";
+import type { WelcomeProps } from "./NativeWelcome";
 import { react } from "./react";
 
 /** The requirement: never take over more than three announcements' worth. */
@@ -84,7 +84,6 @@ export function AnnouncementWelcome({
 
   return (
     <div className="hub-ann-wrap">
-      <NativeWelcome {...hostProps} />
       <AgentPicker loadAgents={loadAgents} />
       {visible.length > 0 ? (
         <div className="hub-ann-list" role="region" aria-label="公告">
