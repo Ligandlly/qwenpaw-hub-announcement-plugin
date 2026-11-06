@@ -1,6 +1,8 @@
 import type * as ReactNS from "react";
 
+import { AgentPicker } from "./AgentPicker";
 import { AnnouncementCard } from "./AnnouncementCard";
+import type { AgentSummary } from "./agents";
 import {
   dismissAnnouncement,
   fetchFeed,
@@ -26,17 +28,20 @@ export interface AnnouncementWelcomeProps {
   /** Test seam; production uses `window.QwenPaw.host.fetch`. */
   fetcher?: Fetcher;
   refreshMs?: number;
+  /** Test seam; production reads `/agents` through the host bridge. */
+  loadAgents?: () => Promise<AgentSummary[]>;
 }
 
 /**
- * The host welcome, unchanged, with unread announcements stacked beneath it.
- * Announcements are decoration: any failure here leaves the host welcome as
- * the user has always seen it.
+ * The host welcome with the sample prompts replaced by the agent picker, and
+ * unread announcements stacked beneath it. Announcements are decoration: any
+ * failure here leaves the greeting and picker as the user has always seen them.
  */
 export function AnnouncementWelcome({
   hostProps,
   fetcher,
   refreshMs = REFRESH_MS,
+  loadAgents,
 }: AnnouncementWelcomeProps): ReactNS.ReactElement {
   const React = react();
   const [feed, setFeed] = React.useState<Feed | null>(null);
@@ -80,6 +85,7 @@ export function AnnouncementWelcome({
   return (
     <div className="hub-ann-wrap">
       <NativeWelcome {...hostProps} />
+      <AgentPicker loadAgents={loadAgents} />
       {visible.length > 0 ? (
         <div className="hub-ann-list" role="region" aria-label="公告">
           {visible.map((announcement) => (

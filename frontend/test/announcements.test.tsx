@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { AnnouncementWelcome } from "../src/AnnouncementWelcome";
 import { DISMISS_PATH, FEED_PATH, type Announcement, type Fetcher } from "../src/api";
+import type { AgentSummary } from "../src/agents";
 
 function announcement(index: number, extra: Partial<Announcement> = {}): Announcement {
   return {
@@ -52,34 +53,59 @@ const HOST_PROPS = {
   onSubmit: vi.fn(),
 };
 
+const TWO_AGENTS: AgentSummary[] = [
+  { id: "default", name: "默认智能体", description: "处理日常问答" },
+  { id: "ops", name: "运维值班", description: "日志与告警排查" },
+];
+
+/** Keeps the agent picker out of the way unless a test asks for it. */
+const noAgents = () => Promise.resolve<AgentSummary[]>([]);
+
 describe("AnnouncementWelcome", () => {
   it("keeps the host welcome and stacks announcements under it", async () => {
     const { fetcher } = makeFetcher([announcement(1)]);
-    render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} />);
+    render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} loadAgents={noAgents} />);
 
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("今天想做点什么？");
     expect(screen.getByText("选一个开始，或直接输入。")).toBeTruthy();
     expect(document.querySelector('img[src="/qwenpaw.png"]')).not.toBeNull();
-    expect(screen.getByText("写周报")).toBeTruthy();
 
     const card = await screen.findByRole("article");
     expect(card.textContent).toContain("公告 1");
     expect(card.querySelector(".hub-ann-body strong")?.textContent).toBe("1");
   });
 
-  it("still submits prompts and keeps the host callback", async () => {
-    const onSubmit = vi.fn();
+  it("replaces the host sample prompts with the agent picker", async () => {
     const { fetcher } = makeFetcher([]);
     render(
-      <AnnouncementWelcome hostProps={{ ...HOST_PROPS, onSubmit }} fetcher={fetcher} />,
+      <AnnouncementWelcome
+        hostProps={HOST_PROPS}
+        fetcher={fetcher}
+        loadAgents={() => Promise.resolve(TWO_AGENTS)}
+      />,
     );
-    fireEvent.click(screen.getByText("写周报"));
-    expect(onSubmit).toHaveBeenCalledWith({ query: "帮我写周报" });
+    expect(screen.queryByText("写周报")).toBeNull();
+    expect(await screen.findByRole("radiogroup", { name: "智能体" })).toBeTruthy();
+    expect(screen.getByText("运维值班")).toBeTruthy();
+  });
+
+  it("hides the picker when there is only one agent to choose", async () => {
+    const { fetcher } = makeFetcher([announcement(1)]);
+    render(
+      <AnnouncementWelcome
+        hostProps={HOST_PROPS}
+        fetcher={fetcher}
+        loadAgents={() => Promise.resolve([TWO_AGENTS[0]!])}
+      />,
+    );
+    await screen.findByRole("article");
+    expect(document.querySelector(".hub-ann-pick")).toBeNull();
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("今天想做点什么？");
   });
 
   it("shows at most three announcements, newest first", async () => {
     const { fetcher } = makeFetcher([1, 2, 3, 4].map((n) => announcement(n)));
-    render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} />);
+    render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} loadAgents={noAgents} />);
 
     await waitFor(() => expect(screen.getAllByRole("article")).toHaveLength(3));
     expect(screen.getAllByRole("article").map((card) => card.getAttribute("aria-label"))).toEqual([
@@ -91,7 +117,7 @@ describe("AnnouncementWelcome", () => {
 
   it("records a dismissal and hides the card", async () => {
     const { fetcher, calls } = makeFetcher([announcement(1)]);
-    render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} />);
+    render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} loadAgents={noAgents} />);
 
     fireEvent.click(await screen.findByText("知道了"));
 
@@ -108,7 +134,7 @@ describe("AnnouncementWelcome", () => {
     const { fetcher } = makeFetcher([announcement(1)], () =>
       jsonResponse({ detail: "boom" }, 500),
     );
-    render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} />);
+    render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} loadAgents={noAgents} />);
 
     fireEvent.click(await screen.findByText("知道了"));
 
@@ -118,7 +144,7 @@ describe("AnnouncementWelcome", () => {
   it("renders nothing extra when the feed is empty", async () => {
     const { fetcher, calls } = makeFetcher([]);
     const { container } = render(
-      <AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} />,
+      <AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} loadAgents={noAgents} />,
     );
 
     await waitFor(() => expect(calls.length).toBe(1));
@@ -128,7 +154,7 @@ describe("AnnouncementWelcome", () => {
 
   it("survives an unreachable backend", async () => {
     const { fetcher } = makeFetcher(() => jsonResponse({ detail: "down" }, 503));
-    render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} />);
+    render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} loadAgents={noAgents} />);
 
     await waitFor(() => expect(screen.getByRole("heading", { level: 2 })).toBeTruthy());
     expect(screen.queryByRole("article")).toBeNull();
@@ -140,7 +166,7 @@ describe("AnnouncementWelcome", () => {
         '正文 [链接](https://example.com) <script>alert(1)</script><img src="x" onerror="alert(2)">',
     });
     const { fetcher } = makeFetcher([hostile]);
-    render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} />);
+    render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} loadAgents={noAgents} />);
 
     const card = await screen.findByRole("article");
     const body = card.querySelector(".hub-ann-body");
@@ -154,7 +180,7 @@ describe("AnnouncementWelcome", () => {
 
   it("treats an empty body as text-free", async () => {
     const { fetcher } = makeFetcher([announcement(1, { body_md: "   " })]);
-    render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} />);
+    render(<AnnouncementWelcome hostProps={HOST_PROPS} fetcher={fetcher} loadAgents={noAgents} />);
 
     const card = await screen.findByRole("article");
     expect(card.querySelector(".hub-ann-body")).toBeNull();
